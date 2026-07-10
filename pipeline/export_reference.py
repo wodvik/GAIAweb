@@ -206,7 +206,7 @@ def build_context_objects():
          "nearest single star; very high proper motion; thick-disc-like orbit"),
         ("kapteyn", "NAME Kapteyn's star", "Kapteyn's Star",
          "retrograde halo archetype"),
-        ("groombridge1830", "NAME Groombridge 1830", "Groombridge 1830",
+        ("groombridge1830", "HD 103095", "Groombridge 1830",
          "classic high-velocity halo subdwarf"),
     ]
     for oid, simbad_name, label, why in gaia_targets:
