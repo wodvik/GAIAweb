@@ -49,12 +49,17 @@ self.onmessage = async (ev: MessageEvent<OrbitRequest>) => {
   try {
     const model = await getModel(modelId);
     const t0 = performance.now();
+    let lastProgress = 0;
     const traj = integrateOrbit(model, ic, {
       omega,
       tGyr,
       samples,
       onProgress: (frac) => {
-        self.postMessage({ id, progress: frac });
+        const now = performance.now();
+        if (now - lastProgress > 120) {
+          lastProgress = now;
+          self.postMessage({ id, progress: frac });
+        }
       },
     });
     const summary = summarizeOrbit(traj);

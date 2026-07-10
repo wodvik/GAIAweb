@@ -13,7 +13,7 @@ import {
   orbitStarAt,
 } from "@/lib/data/catalogue";
 import { useOrbits, orbitKey, OrbitRequestSpec } from "@/lib/orbit/useOrbits";
-import GalaxyScene, { SceneObject } from "./GalaxyScene";
+import GalaxyScene, { SceneObject, ViewerClock } from "./GalaxyScene";
 
 export const MODELS = [
   {
@@ -100,9 +100,13 @@ export default function OrbitViewer({
   );
   const [selectedContext, setSelectedContext] = useState<string[]>(["sun"]);
   const [search, setSearch] = useState("");
-  const [playing, setPlaying] = useState(true);
-  const [speed, setSpeed] = useState(1); // Gyr per 8 s
-  const [tGyrNow, setTGyrNow] = useState(0);
+  // Playback state lives in a mutable clock consumed by the render loop.
+  // React state here only mirrors it at low frequency for the controls —
+  // never drive the animation through setState (see ViewerClock docs).
+  const clockRef = useRef<ViewerClock>({ t: 0, playing: true, speed: 1 });
+  const [playing, setPlayingState] = useState(true);
+  const [speed, setSpeedState] = useState(1);
+  const [tDisplay, setTDisplay] = useState(0);
   const [showDisc, setShowDisc] = useState(true);
   const [showAccel, setShowAccel] = useState(false);
   const [showPotential, setShowPotential] = useState(false);
@@ -190,20 +194,27 @@ export default function OrbitViewer({
     return objs;
   }, [stars, selectedContext, contextObjects, results, modelId, omega]);
 
-  // animation clock
-  const rafRef = useRef<number>(0);
+  // low-frequency mirror of the clock for the slider/readout (4 Hz)
   useEffect(() => {
-    if (!playing) return;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = (now - last) / 1000;
-      last = now;
-      setTGyrNow((t) => (t + (dt * speed) / 8) % 4);
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, speed]);
+    const id = setInterval(() => setTDisplay(clockRef.current.t), 250);
+    return () => clearInterval(id);
+  }, []);
+
+  const setPlaying = (updater: (p: boolean) => boolean) => {
+    setPlayingState((p) => {
+      const next = updater(p);
+      clockRef.current.playing = next;
+      return next;
+    });
+  };
+  const setSpeed = (v: number) => {
+    clockRef.current.speed = v;
+    setSpeedState(v);
+  };
+  const seek = (t: number) => {
+    clockRef.current.t = t;
+    setTDisplay(t);
+  };
 
   const primary = stars[0];
   const primaryResult = primary
@@ -241,7 +252,7 @@ export default function OrbitViewer({
       <div className="flex-1 relative min-w-0">
         <GalaxyScene
           objects={sceneObjects}
-          tGyr={tGyrNow}
+          clock={clockRef.current}
           totalGyr={4}
           barred={model.barred}
           omega={omega}
@@ -289,11 +300,11 @@ export default function OrbitViewer({
             min={0}
             max={4}
             step={0.001}
-            value={tGyrNow}
-            onChange={(e) => setTGyrNow(parseFloat(e.target.value))}
+            value={tDisplay}
+            onChange={(e) => seek(parseFloat(e.target.value))}
             className="w-48 accent-[var(--accent)]"
           />
-          <span className="num w-20">t = {tGyrNow.toFixed(2)} Gyr</span>
+          <span className="num w-20">t = {tDisplay.toFixed(2)} Gyr</span>
           <select
             className="bg-surface-2 rounded px-1 py-0.5"
             value={speed}

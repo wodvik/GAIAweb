@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { loadPotential, type ModelId } from "@/lib/potentials/load";
 import type { PotentialModel } from "@/lib/potentials/model";
 import { TIME_UNIT_GYR } from "@/lib/orbit/integrate";
+import type { ViewerClock } from "./GalaxyScene";
 
 const BAR_ANGLE = -0.44;
 
@@ -42,16 +43,21 @@ export function EquipotentialOverlay({
   modelId,
   barred,
   omegaP,
-  spinAngle,
+  clock,
+  omega,
+  frame,
   visible,
 }: {
   modelId: string;
   barred: boolean;
   omegaP: number;
-  spinAngle: number;
+  clock: ViewerClock;
+  omega: number;
+  frame: "rotating" | "inertial";
   visible: boolean;
 }) {
   const [data, setData] = useState<OverlayFile | null>(null);
+  const groupRef = useRef<THREE.Group>(null);
   useEffect(() => {
     if (!visible) return;
     let alive = true;
@@ -64,14 +70,23 @@ export function EquipotentialOverlay({
     };
   }, [modelId, visible]);
 
+  const base = data?.frame === "bar" ? BAR_ANGLE : 0;
+  useFrame(() => {
+    if (!groupRef.current) return;
+    const spin =
+      data?.frame === "bar" && frame === "inertial" && omega !== 0
+        ? omega * (clock.t / TIME_UNIT_GYR)
+        : 0;
+    groupRef.current.rotation.z = base + spin;
+  });
+
   if (!visible || !data) return null;
   const segs: ContourSeg[] = barred
     ? (data.effective?.[String(omegaP)] ?? data.midplanePhi)
     : data.midplanePhi;
-  const rotation = data.frame === "bar" ? BAR_ANGLE + spinAngle : 0;
 
   return (
-    <group rotation={[0, 0, rotation]}>
+    <group ref={groupRef} rotation={[0, 0, base]}>
       {segs.map((seg, i) => (
         <Line
           key={i}
@@ -93,7 +108,7 @@ export function AccelArrow({
   getPosition,
   omega,
   frame,
-  tGyr,
+  clock,
   visible,
 }: {
   modelId: ModelId;
@@ -101,7 +116,7 @@ export function AccelArrow({
   getPosition: () => [number, number, number] | null;
   omega: number;
   frame: "rotating" | "inertial";
-  tGyr: number;
+  clock: ViewerClock;
   visible: boolean;
 }) {
   const [model, setModel] = useState<PotentialModel | null>(null);
@@ -133,7 +148,7 @@ export function AccelArrow({
     const z = pos[2];
     // undo inertial spin (display -> release rotating frame)
     if (frame === "inertial" && omega !== 0) {
-      const ang = -omega * (tGyr / TIME_UNIT_GYR);
+      const ang = -omega * (clock.t / TIME_UNIT_GYR);
       const c = Math.cos(ang);
       const s = Math.sin(ang);
       [x, y] = [c * x - s * y, s * x + c * y];
@@ -160,7 +175,7 @@ export function AccelArrow({
       [ax, ay] = [c * ax - s * ay, s * ax + c * ay];
     }
     if (frame === "inertial" && omega !== 0) {
-      const ang = omega * (tGyr / TIME_UNIT_GYR);
+      const ang = omega * (clock.t / TIME_UNIT_GYR);
       const c = Math.cos(ang);
       const s = Math.sin(ang);
       [ax, ay] = [c * ax - s * ay, s * ax + c * ay];

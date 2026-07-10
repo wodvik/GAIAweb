@@ -26,9 +26,22 @@ export interface SceneObject {
   emphasis: boolean;
 }
 
+/**
+ * Mutable playback clock shared between the control panel and the render
+ * loop. Advanced inside useFrame and read by markers/overlays per frame —
+ * deliberately NOT React state: driving 60 fps animation through setState
+ * re-renders the whole viewer tree (with multi-MB typed-array props) every
+ * frame and, with dev-tools render instrumentation, exhausts memory.
+ */
+export interface ViewerClock {
+  t: number; // Gyr
+  playing: boolean;
+  speed: number; // 1 = 4 Gyr in 32 s
+}
+
 interface SceneProps {
   objects: SceneObject[];
-  tGyr: number;
+  clock: ViewerClock;
   totalGyr: number;
   barred: boolean;
   omega: number; // release sign convention (negative = clockwise)
@@ -98,27 +111,20 @@ function DiscPoints({ visible }: { visible: boolean }) {
   );
 }
 
-/** bar overlay: wireframe ellipsoid, half-length ~4.5 kpc, at BAR_ANGLE */
-function BarOverlay({
-  visible,
-  spinAngle,
-}: {
-  visible: boolean;
-  spinAngle: number;
-}) {
+/** bar overlay: wireframe ellipsoid, half-length ~4.5 kpc; orientation is
+ * applied by the enclosing SpinGroup */
+function BarOverlay({ visible }: { visible: boolean }) {
   return (
-    <group rotation={[0, 0, BAR_ANGLE + spinAngle]} visible={visible}>
-      <mesh scale={[4.5, 1.4, 0.9]}>
-        <sphereGeometry args={[1, 24, 12]} />
-        <meshBasicMaterial
-          color="#f0865c"
-          wireframe
-          transparent
-          opacity={0.12}
-          depthWrite={false}
-        />
-      </mesh>
-    </group>
+    <mesh scale={[4.5, 1.4, 0.9]} visible={visible}>
+      <sphereGeometry args={[1, 24, 12]} />
+      <meshBasicMaterial
+        color="#f0865c"
+        wireframe
+        transparent
+        opacity={0.12}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 
@@ -184,14 +190,14 @@ function OrbitTrail({
 
 function MovingMarker({
   obj,
-  tGyr,
+  clock,
   totalGyr,
   omega,
   frame,
   reportRef,
 }: {
   obj: SceneObject;
-  tGyr: number;
+  clock: ViewerClock;
   totalGyr: number;
   omega: number;
   frame: "rotating" | "inertial";
@@ -201,6 +207,7 @@ function MovingMarker({
   const n = obj.positions.length / 3;
   useFrame(() => {
     if (!ref.current) return;
+    const tGyr = clock.t;
     const f = Math.min(0.99999, Math.max(0, tGyr / totalGyr));
     const fi = f * (n - 1);
     const i0 = Math.floor(fi);
@@ -243,21 +250,41 @@ function MovingMarker({
   );
 }
 
-function BarSpin({
+/** Advances the shared clock once per rendered frame. */
+function ClockDriver({ clock, totalGyr }: { clock: ViewerClock; totalGyr: number }) {
+  useFrame((_, delta) => {
+    if (clock.playing) {
+      clock.t = (clock.t + (delta * clock.speed * totalGyr) / 32) % totalGyr;
+    }
+  });
+  return null;
+}
+
+/** Group whose z-rotation follows the bar: frozen in the rotating frame,
+ * spinning with omega in the inertial view. */
+export function SpinGroup({
+  clock,
   omega,
-  tGyr,
   frame,
-  visible,
+  base,
+  children,
 }: {
+  clock: ViewerClock;
   omega: number;
-  tGyr: number;
   frame: "rotating" | "inertial";
-  visible: boolean;
+  base: number;
+  children: React.ReactNode;
 }) {
-  // in the rotating frame the bar is frozen; in the inertial frame it spins
-  const spin =
-    frame === "inertial" && omega !== 0 ? omega * (tGyr / TIME_UNIT_GYR) : 0;
-  return <BarOverlay visible={visible} spinAngle={spin} />;
+  const ref = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!ref.current) return;
+    const spin =
+      frame === "inertial" && omega !== 0
+        ? omega * (clock.t / TIME_UNIT_GYR)
+        : 0;
+    ref.current.rotation.z = base + spin;
+  });
+  return <group ref={ref}>{children}</group>;
 }
 
 function CameraRig() {
@@ -273,7 +300,7 @@ function CameraRig() {
 export default function GalaxyScene(props: SceneProps) {
   const {
     objects,
-    tGyr,
+    clock,
     totalGyr,
     barred,
     omega,
@@ -284,14 +311,19 @@ export default function GalaxyScene(props: SceneProps) {
     modelId,
   } = props;
   const primaryPosRef = useRef<[number, number, number] | null>(null);
-  const spin =
-    frame === "inertial" && omega !== 0 ? omega * (tGyr / TIME_UNIT_GYR) : 0;
   return (
     <Canvas
-      gl={{ antialias: true }}
-      dpr={[1, 2]}
+      gl={{ antialias: true, powerPreference: "high-performance" }}
+      dpr={[1, 1.5]}
       style={{ background: "var(--background)" }}
       camera={{ fov: 50, near: 0.01, far: 2000 }}
+      onCreated={({ gl }) => {
+        // surface context loss explicitly instead of silently going blank
+        gl.domElement.addEventListener("webglcontextlost", (e) => {
+          e.preventDefault();
+          console.warn("[viewer] WebGL context lost — attempting restore");
+        });
+      }}
     >
       <CameraRig />
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
@@ -305,14 +337,19 @@ export default function GalaxyScene(props: SceneProps) {
       <Text position={[0.15, 0.15, 0.1]} fontSize={0.3} color="#8494ac" anchorX="left">
         Sgr A*
       </Text>
+      <ClockDriver clock={clock} totalGyr={totalGyr} />
       <SolarRing />
       <DiscPoints visible={showDisc} />
-      <BarSpin omega={omega} tGyr={tGyr} frame={frame} visible={barred} />
+      <SpinGroup clock={clock} omega={omega} frame={frame} base={BAR_ANGLE}>
+        <BarOverlay visible={barred} />
+      </SpinGroup>
       <EquipotentialOverlay
         modelId={modelId}
         barred={barred}
         omegaP={-omega}
-        spinAngle={barred ? spin : 0}
+        clock={clock}
+        omega={omega}
+        frame={frame}
         visible={showPotential}
       />
       <AccelArrow
@@ -320,7 +357,7 @@ export default function GalaxyScene(props: SceneProps) {
         getPosition={() => primaryPosRef.current}
         omega={omega}
         frame={frame}
-        tGyr={tGyr}
+        clock={clock}
         visible={showAccel}
       />
 
@@ -329,7 +366,7 @@ export default function GalaxyScene(props: SceneProps) {
           <OrbitTrail obj={o} omega={omega} frame={frame} totalGyr={totalGyr} />
           <MovingMarker
             obj={o}
-            tGyr={tGyr}
+            clock={clock}
             totalGyr={totalGyr}
             omega={omega}
             frame={frame}

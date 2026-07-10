@@ -76,6 +76,12 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
         const spec = specsRef.current.get(key);
         setResults((old) => {
           const next = new Map(old);
+          // bound memory: each result holds ~1 MB of typed arrays; evict the
+          // oldest entries beyond a small cache (Map preserves insert order)
+          while (next.size >= 24) {
+            const oldest = next.keys().next().value as string;
+            next.delete(oldest);
+          }
           next.set(key, {
             key,
             objectId: spec?.objectId ?? "",
