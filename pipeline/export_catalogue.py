@@ -40,6 +40,7 @@ MCMILLAN_CSV = PHASE14 / "expanded_mcmillan_per_star.csv"
 MASTER_COLS_NUM = [
     "ra", "dec", "l", "b",
     "parallax", "parallax_error", "parallax_over_error", "parallax_zpcorr",
+    "zpcorr_value_uas",
     "dist_pc", "dist_lo_pc", "dist_hi_pc",
     "pmra", "pmra_error", "pmdec", "pmdec_error",
     "radial_velocity", "radial_velocity_error",
