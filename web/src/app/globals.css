@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+:root {
+  --background: #05080f;
+  --surface: #0b111d;
+  --surface-2: #101827;
+  --border: #1c2739;
+  --foreground: #d7e1f0;
+  --muted: #8494ac;
+  --faint: #55637a;
+  --accent: #62d6e8;
+  --accent-dim: #2a7f8f;
+  --tier-a: #62d6e8;
+  --tier-b: #8fa3f5;
+  --tier-c: #e8b46a;
+  --tier-d: #9a7ba8;
+  --tier-x: #4a5568;
+  --model-static: #62d6e8;
+  --model-barred: #f0865c;
+  --model-mcmillan: #9fe870;
+  --model-portail: #e070c8;
+  --sun: #ffd869;
+  --danger: #f07178;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-borderc: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-tier-a: var(--tier-a);
+  --color-tier-b: var(--tier-b);
+  --color-tier-c: var(--tier-c);
+  --color-tier-d: var(--tier-d);
+  --color-sun: var(--sun);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgba(98, 214, 232, 0.25);
+}
+
+/* thin scrollbars for data panels */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.num {
+  font-family: var(--font-geist-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+a.textlink {
+  color: var(--accent);
+  text-decoration: none;
+}
+a.textlink:hover {
+  text-decoration: underline;
+}
