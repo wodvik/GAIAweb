@@ -14,6 +14,8 @@ import { Line, OrbitControls, Text } from "@react-three/drei";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { TIME_UNIT_GYR } from "@/lib/orbit/integrate";
+import type { ModelId } from "@/lib/potentials/load";
+import { AccelArrow, EquipotentialOverlay } from "./overlays";
 
 export interface SceneObject {
   id: string;
@@ -186,12 +188,14 @@ function MovingMarker({
   totalGyr,
   omega,
   frame,
+  reportRef,
 }: {
   obj: SceneObject;
   tGyr: number;
   totalGyr: number;
   omega: number;
   frame: "rotating" | "inertial";
+  reportRef?: React.RefObject<[number, number, number] | null>;
 }) {
   const ref = useRef<THREE.Group>(null);
   const n = obj.positions.length / 3;
@@ -217,6 +221,7 @@ function MovingMarker({
       x = xi;
     }
     ref.current.position.set(x, y, z);
+    if (reportRef) reportRef.current = [x, y, z];
   });
   return (
     <group ref={ref}>
@@ -274,7 +279,13 @@ export default function GalaxyScene(props: SceneProps) {
     omega,
     frame,
     showDisc,
+    showAccel,
+    showPotential,
+    modelId,
   } = props;
+  const primaryPosRef = useRef<[number, number, number] | null>(null);
+  const spin =
+    frame === "inertial" && omega !== 0 ? omega * (tGyr / TIME_UNIT_GYR) : 0;
   return (
     <Canvas
       gl={{ antialias: true }}
@@ -297,6 +308,21 @@ export default function GalaxyScene(props: SceneProps) {
       <SolarRing />
       <DiscPoints visible={showDisc} />
       <BarSpin omega={omega} tGyr={tGyr} frame={frame} visible={barred} />
+      <EquipotentialOverlay
+        modelId={modelId}
+        barred={barred}
+        omegaP={-omega}
+        spinAngle={barred ? spin : 0}
+        visible={showPotential}
+      />
+      <AccelArrow
+        modelId={modelId as ModelId}
+        getPosition={() => primaryPosRef.current}
+        omega={omega}
+        frame={frame}
+        tGyr={tGyr}
+        visible={showAccel}
+      />
 
       {objects.map((o) => (
         <group key={o.id}>
@@ -307,6 +333,7 @@ export default function GalaxyScene(props: SceneProps) {
             totalGyr={totalGyr}
             omega={omega}
             frame={frame}
+            reportRef={o.emphasis ? primaryPosRef : undefined}
           />
         </group>
       ))}
