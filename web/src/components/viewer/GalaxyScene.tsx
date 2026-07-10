@@ -39,6 +39,8 @@ export interface ViewerClock {
   speed: number; // 1 = 4 Gyr in 32 s
 }
 
+export type ViewPreset = "threequarter" | "faceon" | "edgeon";
+
 interface SceneProps {
   objects: SceneObject[];
   clock: ViewerClock;
@@ -50,6 +52,8 @@ interface SceneProps {
   showAccel: boolean;
   showPotential: boolean;
   modelId: string;
+  /** camera preset command; applied whenever seq changes */
+  view: { preset: ViewPreset; seq: number };
 }
 
 const R0 = 8.178;
@@ -287,13 +291,27 @@ export function SpinGroup({
   return <group ref={ref}>{children}</group>;
 }
 
-function CameraRig() {
-  const { camera } = useThree();
+const VIEW_POSITIONS: Record<ViewPreset, [number, number, number]> = {
+  threequarter: [6, -22, 12],
+  faceon: [0, -0.8, 30],
+  edgeon: [0, -30, 1.2],
+};
+
+function CameraRig({ view }: { view: { preset: ViewPreset; seq: number } }) {
+  const { camera, controls } = useThree();
   useEffect(() => {
     camera.up.set(0, 0, 1);
-    camera.position.set(6, -22, 12);
+    camera.position.set(...VIEW_POSITIONS[view.preset]);
     camera.lookAt(0, 0, 0);
-  }, [camera]);
+    const oc = controls as unknown as {
+      target?: THREE.Vector3;
+      update?: () => void;
+    } | null;
+    if (oc?.target) {
+      oc.target.set(0, 0, 0);
+      oc.update?.();
+    }
+  }, [camera, controls, view.preset, view.seq]);
   return null;
 }
 
@@ -309,6 +327,7 @@ export default function GalaxyScene(props: SceneProps) {
     showAccel,
     showPotential,
     modelId,
+    view,
   } = props;
   const primaryPosRef = useRef<[number, number, number] | null>(null);
   return (
@@ -325,7 +344,7 @@ export default function GalaxyScene(props: SceneProps) {
         });
       }}
     >
-      <CameraRig />
+      <CameraRig view={view} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
       <ambientLight intensity={0.6} />
 

@@ -13,7 +13,11 @@ import {
   orbitStarAt,
 } from "@/lib/data/catalogue";
 import { useOrbits, orbitKey, OrbitRequestSpec } from "@/lib/orbit/useOrbits";
-import GalaxyScene, { SceneObject, ViewerClock } from "./GalaxyScene";
+import GalaxyScene, {
+  SceneObject,
+  ViewerClock,
+  ViewPreset,
+} from "./GalaxyScene";
 
 export const MODELS = [
   {
@@ -94,7 +98,7 @@ export default function OrbitViewer({
 
   const [modelId, setModelId] = useState("hunter24_axi");
   const [omegaP, setOmegaP] = useState(37.5);
-  const [frame, setFrame] = useState<"rotating" | "inertial">("rotating");
+  const [frame, setFrame] = useState<"rotating" | "inertial">("inertial");
   const [selectedStars, setSelectedStars] = useState<string[]>(
     initialStar ? [initialStar] : [],
   );
@@ -110,6 +114,10 @@ export default function OrbitViewer({
   const [showDisc, setShowDisc] = useState(true);
   const [showAccel, setShowAccel] = useState(false);
   const [showPotential, setShowPotential] = useState(false);
+  const [view, setView] = useState<{ preset: ViewPreset; seq: number }>({
+    preset: "threequarter",
+    seq: 0,
+  });
 
   useEffect(() => {
     loadOrbits().then(setOrbits, (e) => setLoadError(String(e)));
@@ -261,7 +269,30 @@ export default function OrbitViewer({
           showAccel={showAccel}
           showPotential={showPotential}
           modelId={modelId}
+          view={view}
         />
+        {/* camera presets */}
+        <div className="absolute top-3 right-3 panel px-1.5 py-1 flex gap-1 text-xs">
+          {(
+            [
+              ["threequarter", "¾ view"],
+              ["faceon", "face-on"],
+              ["edgeon", "edge-on"],
+            ] as const
+          ).map(([p, label]) => (
+            <button
+              key={p}
+              onClick={() => setView((v) => ({ preset: p, seq: v.seq + 1 }))}
+              className={`px-1.5 py-0.5 rounded ${
+                view.preset === p
+                  ? "bg-accent/20 text-accent"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {loadError && (
           <div className="absolute top-3 left-3 text-danger text-sm panel px-3 py-2">
             {loadError}
@@ -377,8 +408,8 @@ export default function OrbitViewer({
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted">frame</span>
-                {(["rotating", "inertial"] as const).map((f) => (
+                <span className="text-muted">view frame</span>
+                {(["inertial", "rotating"] as const).map((f) => (
                   <button
                     key={f}
                     onClick={() => setFrame(f)}
@@ -388,14 +419,18 @@ export default function OrbitViewer({
                         : "bg-surface-2 text-muted hover:text-foreground"
                     }`}
                   >
-                    {f === "rotating" ? "corotating (bar fixed)" : "inertial"}
+                    {f === "rotating" ? "corotating (bar fixed)" : "inertial (space)"}
                   </button>
                 ))}
               </div>
               <p className="text-xs text-faint leading-tight">
-                Bar angle −0.44 rad (≈25°), pattern speed negative = clockwise;
-                paper default Ω<sub>p</sub> = 37.5, sensitivity grid 24–41.
-                Published barred columns use Ω<sub>p</sub> = 37.5.
+                Same orbit, two coordinate systems — the paper integrates in
+                the corotating frame (bar frozen; the frame turns ~24× over 4
+                Gyr, winding the trail), but R<sub>peri</sub>, R<sub>apo</sub>,
+                z<sub>max</sub> and e are rotation-invariant: both views give
+                the published numbers. Bar angle −0.44 rad (≈25°), Ω
+                <sub>p</sub> negative = clockwise; paper default 37.5,
+                sensitivity grid 24–41 (published barred columns use 37.5).
               </p>
             </div>
           )}
