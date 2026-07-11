@@ -16,11 +16,14 @@ import {
   LabSettings,
   componentModel,
 } from "../potentials/lab";
-import { integrateOrbit } from "./integrate";
+import { OrbitAbort, integrateOrbit } from "./integrate";
 import { summarizeOrbit } from "./summary";
 
 interface OrbitRequest {
   id: number;
+  /** object this orbit belongs to; a newer request for the same object
+   * supersedes (cancels) any queued or in-flight older one */
+  objectId: string;
   modelId: string;
   ic: number[];
   omega: number;
@@ -32,6 +35,10 @@ interface OrbitRequest {
 }
 
 const models = new Map<string, Promise<PotentialModel>>();
+/** newest request id per (objectId, modelId) lane — older ones are skipped
+ * or aborted. The lane includes modelId so a Lab request and its adopted-
+ * model ghost (same object) never cancel each other. */
+const latestByLane = new Map<string, number>();
 let labIndexPromise: Promise<LabIndex> | null = null;
 const labParts = new Map<string, Promise<PotentialModel>>();
 
@@ -43,6 +50,10 @@ function getLabIndex(): Promise<LabIndex> {
         return r.json();
       },
     );
+    // a transient fetch failure must not poison the cache forever
+    labIndexPromise.catch(() => {
+      labIndexPromise = null;
+    });
   }
   return labIndexPromise;
 }
@@ -59,6 +70,7 @@ async function getLabPart(id: string): Promise<PotentialModel> {
       return componentModel(index, comp, await res.arrayBuffer());
     })();
     labParts.set(id, p);
+    p.catch(() => labParts.delete(id));
   }
   return p;
 }
@@ -103,20 +115,39 @@ function getModel(modelId: string): Promise<PotentialModel> {
       return new PotentialModel(meta, buf);
     })();
     models.set(modelId, p);
+    p.catch(() => models.delete(modelId));
   }
   return p;
 }
 
 self.onmessage = async (ev: MessageEvent<OrbitRequest>) => {
-  const { id, modelId, ic, omega, tGyr, samples, lab } = ev.data;
+  const { id, objectId, modelId, ic, omega, tGyr, samples, lab } = ev.data;
+  const lane = `${objectId}|${modelId}`;
+  latestByLane.set(lane, id);
+  const superseded = () => (latestByLane.get(lane) ?? id) !== id;
   try {
+    // Yield one macrotask BEFORE heavy work: cached model promises resolve as
+    // microtasks, which would otherwise start the (synchronous, seconds-long)
+    // integration before any queued newer message gets to register its lane
+    // claim — making cancellation dead code and grinding through every stale
+    // slider position sequentially.
+    await new Promise((r) => setTimeout(r, 0));
+    if (superseded()) {
+      self.postMessage({ id, cancelled: true });
+      return;
+    }
     const model = lab ? await buildComposite(lab) : await getModel(modelId);
+    if (superseded()) {
+      self.postMessage({ id, cancelled: true });
+      return;
+    }
     const t0 = performance.now();
     let lastProgress = 0;
     const traj = integrateOrbit(model, ic, {
       omega,
       tGyr,
       samples,
+      shouldAbort: superseded,
       onProgress: (frac) => {
         const now = performance.now();
         if (now - lastProgress > 120) {
@@ -155,6 +186,10 @@ self.onmessage = async (ev: MessageEvent<OrbitRequest>) => {
       { transfer: [positions.buffer, velocities.buffer, phi.buffer] },
     );
   } catch (err) {
-    self.postMessage({ id, ok: false, error: String(err) });
+    if (err instanceof OrbitAbort) {
+      self.postMessage({ id, cancelled: true });
+    } else {
+      self.postMessage({ id, ok: false, error: String(err) });
+    }
   }
 };

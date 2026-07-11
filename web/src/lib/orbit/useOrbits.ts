@@ -50,6 +50,7 @@ export function orbitKey(
 interface WorkerMsg {
   id: number;
   ok?: boolean;
+  cancelled?: boolean;
   progress?: number;
   positions?: Float32Array;
   velocities?: Float32Array;
@@ -69,6 +70,10 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
   const [progress, setProgress] = useState<Map<string, number>>(new Map());
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
   const inFlightRef = useRef(new Set<string>());
+  /** keys the CURRENT render still wants — protected from cache eviction,
+   * and re-requested if their in-flight run gets superseded then wanted again */
+  const wantedRef = useRef(new Set<string>());
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     const worker = new Worker(new URL("./worker.ts", import.meta.url), {
@@ -85,15 +90,31 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
       }
       pendingRef.current.delete(msg.id);
       inFlightRef.current.delete(key);
+      if (msg.cancelled) {
+        // superseded by a newer request in the same worker lane; if this key
+        // is still wanted (e.g. sliders returned to an earlier value), poke
+        // the request effect to re-post it
+        setProgress((old) => {
+          const next = new Map(old);
+          next.delete(key);
+          return next;
+        });
+        if (wantedRef.current.has(key)) setRetryNonce((n) => n + 1);
+        return;
+      }
       if (msg.ok) {
         const spec = specsRef.current.get(key);
         setResults((old) => {
           const next = new Map(old);
           // bound memory: each result holds ~1 MB of typed arrays; evict the
-          // oldest entries beyond a small cache (Map preserves insert order)
-          while (next.size >= 24) {
-            const oldest = next.keys().next().value as string;
-            next.delete(oldest);
+          // oldest entries beyond a small cache (Map preserves insert order),
+          // but never evict what the current render is displaying
+          if (next.size >= 24) {
+            for (const k of next.keys()) {
+              if (next.size < 24) break;
+              if (k === key || wantedRef.current.has(k)) continue;
+              next.delete(k);
+            }
           }
           next.set(key, {
             key,
@@ -130,6 +151,9 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
   useEffect(() => {
     const worker = workerRef.current;
     if (!worker) return;
+    wantedRef.current = new Set(
+      requests.map((s) => orbitKey(s.objectId, s.modelId, s.omega, s.labSig)),
+    );
     for (const spec of requests) {
       const key = orbitKey(spec.objectId, spec.modelId, spec.omega, spec.labSig);
       if (results.has(key) || inFlightRef.current.has(key)) continue;
@@ -139,6 +163,7 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
       pendingRef.current.set(id, key);
       worker.postMessage({
         id,
+        objectId: spec.objectId,
         modelId: spec.modelId,
         ic: spec.ic,
         omega: spec.omega,
@@ -147,7 +172,7 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
         lab: spec.lab,
       });
     }
-  }, [requests, results]);
+  }, [requests, results, retryNonce]);
 
   return useMemo(
     () => ({ results, progress, errors }),

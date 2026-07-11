@@ -73,6 +73,16 @@ export interface IntegrationOptions {
   atol?: number;
   /** progress callback, called with fraction complete in [0,1] */
   onProgress?: (frac: number) => void;
+  /** polled periodically; return true to abort (throws OrbitAbort) */
+  shouldAbort?: () => boolean;
+}
+
+/** Thrown when an integration is superseded and aborts mid-run. */
+export class OrbitAbort extends Error {
+  constructor() {
+    super("orbit integration aborted");
+    this.name = "OrbitAbort";
+  }
 }
 
 export interface Trajectory {
@@ -266,7 +276,10 @@ export function integrateOrbit(
       w.set(wNew);
       k1.set(k7); // FSAL
       out.nSteps++;
-      if (opts.onProgress && out.nSteps % 256 === 0) opts.onProgress(t / tmax);
+      if (out.nSteps % 256 === 0) {
+        if (opts.onProgress) opts.onProgress(t / tmax);
+        if (opts.shouldAbort && opts.shouldAbort()) throw new OrbitAbort();
+      }
       // PI step-size control on the controller step (not the clamped one)
       const fac =
         0.9 * Math.pow(errNorm || 1e-10, -0.7 / 5) * Math.pow(prevErrNorm, 0.4 / 5);
