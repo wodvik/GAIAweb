@@ -497,7 +497,11 @@ export default function OrbitViewer({
   );
 
   return (
-    <div className="flex flex-1 min-h-0">
+    // pinned to the viewport (header is h-12): the control column can grow
+    // arbitrarily tall and must scroll internally — if this row sized itself
+    // to the panel, the canvas would render taller than the window and the
+    // scene would be pushed down and clipped
+    <div className="flex h-[calc(100dvh-3rem)] min-h-[480px]">
       {/* 3D canvas */}
       <div className="flex-1 relative min-w-0">
         <GalaxyScene
