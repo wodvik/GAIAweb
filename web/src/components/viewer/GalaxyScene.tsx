@@ -24,6 +24,8 @@ export interface SceneObject {
   /** interleaved x,y,z positions, uniform in time over totalGyr */
   positions: Float32Array;
   emphasis: boolean;
+  /** faint comparison trail (no marker) */
+  ghost?: boolean;
 }
 
 /**
@@ -185,9 +187,9 @@ function OrbitTrail({
     <Line
       points={points}
       color={obj.color}
-      lineWidth={obj.emphasis ? 1.6 : 1}
+      lineWidth={obj.ghost ? 0.8 : obj.emphasis ? 1.6 : 1}
       transparent
-      opacity={obj.emphasis ? 0.85 : 0.5}
+      opacity={obj.ghost ? 0.22 : obj.emphasis ? 0.85 : 0.5}
     />
   );
 }
@@ -383,14 +385,16 @@ export default function GalaxyScene(props: SceneProps) {
       {objects.map((o) => (
         <group key={o.id}>
           <OrbitTrail obj={o} omega={omega} frame={frame} totalGyr={totalGyr} />
-          <MovingMarker
-            obj={o}
-            clock={clock}
-            totalGyr={totalGyr}
-            omega={omega}
-            frame={frame}
-            reportRef={o.emphasis ? primaryPosRef : undefined}
-          />
+          {!o.ghost && (
+            <MovingMarker
+              obj={o}
+              clock={clock}
+              totalGyr={totalGyr}
+              omega={omega}
+              frame={frame}
+              reportRef={o.emphasis ? primaryPosRef : undefined}
+            />
+          )}
         </group>
       ))}
     </Canvas>

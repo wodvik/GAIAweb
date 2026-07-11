@@ -20,7 +20,18 @@
  * present-day angle of -0.44 rad, frozen).
  */
 
-import type { PotentialModel } from "../potentials/model";
+/** Anything integrable: the grid-backed PotentialModel or the Model-Lab
+ * CompositeModel. */
+export interface OrbitModel {
+  readonly isRotating: boolean;
+  readonly meta: { barAngleRad?: number; barRotationSign?: number };
+  accelPhi(
+    x: number,
+    y: number,
+    z: number,
+    out: { ax: number; ay: number; az: number; phi: number },
+  ): void;
+}
 
 export const TIME_UNIT_GYR = 0.9778;
 export const DEFAULT_T_GYR = 4.0;
@@ -86,7 +97,7 @@ interface Derivative {
 }
 
 export function integrateOrbit(
-  model: PotentialModel,
+  model: OrbitModel,
   icGalactocentric: readonly number[],
   opts: IntegrationOptions = {},
 ): Trajectory {

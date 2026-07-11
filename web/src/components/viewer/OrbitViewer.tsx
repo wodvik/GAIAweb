@@ -18,6 +18,76 @@ import GalaxyScene, {
   ViewerClock,
   ViewPreset,
 } from "./GalaxyScene";
+import { LabIndex, bhVc2 } from "@/lib/potentials/lab";
+
+/** One multiplier per physical knob; expanded to per-component multipliers. */
+interface LabGroups {
+  halo: number;
+  disc: number;
+  gas: number;
+  bar: number;
+  nsd: number;
+  nsc: number;
+  bh: number;
+}
+
+const LAB_DEFAULT: LabGroups = {
+  halo: 1,
+  disc: 1,
+  gas: 1,
+  bar: 1,
+  nsd: 1,
+  nsc: 1,
+  bh: 1,
+};
+
+const LAB_PRESETS: { label: string; groups: Partial<LabGroups> }[] = [
+  { label: "paper (×1)", groups: {} },
+  { label: "halo −15%", groups: { halo: 0.85 } },
+  { label: "halo +15%", groups: { halo: 1.15 } },
+  { label: "no bar", groups: { bar: 0 } },
+  { label: "no dark halo", groups: { halo: 0 } },
+];
+
+const LAB_SLIDERS: {
+  key: keyof LabGroups;
+  label: string;
+  max: number;
+  note?: string;
+}[] = [
+  { key: "halo", label: "dark halo (Einasto)", max: 2.5 },
+  { key: "disc", label: "stellar discs (thin+thick)", max: 2.5 },
+  { key: "gas", label: "gas discs (HI + H₂)", max: 2.5 },
+  { key: "bar", label: "bar (Sormani+22)", max: 2 },
+  { key: "nsd", label: "nuclear stellar disc", max: 3 },
+  { key: "nsc", label: "nuclear star cluster", max: 3 },
+  { key: "bh", label: "Sgr A* (4.1×10⁶ M☉ Plummer)", max: 10 },
+];
+
+function groupsToK(g: LabGroups): Record<string, number> {
+  return {
+    halo: g.halo,
+    disc_thin: g.disc,
+    disc_thick: g.disc,
+    gas_hi: g.gas,
+    gas_mol: g.gas,
+    nsd: g.nsd,
+    nsc: g.nsc,
+    bar_axi: g.bar,
+    bar_full: g.bar,
+  };
+}
+
+function labSigOf(g: LabGroups): string {
+  return (Object.keys(LAB_DEFAULT) as (keyof LabGroups)[])
+    .map((k) => g[k].toFixed(3))
+    .join(",");
+}
+
+const LAB_IS_DEFAULT = (g: LabGroups) =>
+  (Object.keys(LAB_DEFAULT) as (keyof LabGroups)[]).every(
+    (k) => Math.abs(g[k] - 1) < 1e-9,
+  );
 
 export const MODELS = [
   {
@@ -81,6 +151,85 @@ function fmt(v: number | undefined, digits = 3): string {
   return v.toFixed(digits);
 }
 
+/** Rotation-curve decomposition for the Model Lab: v_c²(R) contributions add
+ * linearly with the mass multipliers, so the total updates exactly. */
+function LabRotationCurve({
+  index,
+  groups,
+}: {
+  index: LabIndex;
+  groups: LabGroups;
+}) {
+  const W = 264;
+  const H = 110;
+  const RMAX = 20;
+  const VMAX = 320;
+  const groupOf: Record<string, keyof LabGroups> = {
+    halo: "halo",
+    disc: "disc",
+    gas: "gas",
+    bar: "bar",
+    nsd: "nsd",
+    nsc: "nsc",
+  };
+  const comps = index.components.filter(
+    (c) => c.kind === "axisymmetric" && c.vc2_R_kpc && c.vc2_kms2,
+  );
+  if (comps.length === 0) return null;
+  const R = comps[0].vc2_R_kpc!;
+  const total = (useDefaults: boolean) =>
+    R.map((r, i) => {
+      let v2 = 0;
+      for (const c of comps) {
+        const g = groupOf[c.group];
+        const k = useDefaults || g === undefined ? 1 : groups[g];
+        v2 += k * (c.vc2_kms2![i] ?? 0);
+      }
+      v2 += bhVc2(index, useDefaults ? 1 : groups.bh, r);
+      return Math.sqrt(Math.max(0, v2));
+    });
+  const path = (vals: number[]) =>
+    R.map((r, i) =>
+      r > RMAX
+        ? null
+        : `${i === 0 || R[i - 1] > RMAX ? "M" : "L"}${((r / RMAX) * W).toFixed(1)},${(
+            H -
+            (Math.min(vals[i], VMAX) / VMAX) * H
+          ).toFixed(1)}`,
+    )
+      .filter(Boolean)
+      .join(" ");
+  const vNow = total(false);
+  const vDefault = total(true);
+  const xR0 = (8.178 / RMAX) * W;
+  return (
+    <div className="bg-surface-2 rounded p-2">
+      <svg viewBox={`0 0 ${W} ${H + 14}`} className="w-full">
+        <line x1={xR0} x2={xR0} y1={0} y2={H} stroke="#39465e" strokeDasharray="3 3" />
+        <text x={xR0 + 3} y={10} fill="var(--faint)" fontSize={8}>
+          R☉
+        </text>
+        {[100, 200, 300].map((v) => (
+          <text
+            key={v}
+            x={1}
+            y={H - (v / VMAX) * H - 2}
+            fill="var(--faint)"
+            fontSize={7}
+          >
+            {v}
+          </text>
+        ))}
+        <path d={path(vDefault)} fill="none" stroke="#55637a" strokeWidth={1} strokeDasharray="4 3" />
+        <path d={path(vNow)} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
+        <text x={W - 2} y={H + 11} fill="var(--faint)" fontSize={8} textAnchor="end">
+          v_c(R) km/s · 0–{RMAX} kpc · dashed = paper ×1
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 function fmtPc(kpc: number | undefined): string {
   if (kpc === undefined || Number.isNaN(kpc)) return "—";
   if (Math.abs(kpc) < 1) return `${(kpc * 1000).toFixed(1)} pc`;
@@ -119,6 +268,26 @@ export default function OrbitViewer({
     seq: 0,
   });
 
+  // --- Model Lab state ---
+  const [labEnabled, setLabEnabled] = useState(false);
+  const [labIndex, setLabIndex] = useState<LabIndex | null>(null);
+  const [labGroups, setLabGroups] = useState<LabGroups>(LAB_DEFAULT);
+  const [labDebounced, setLabDebounced] = useState<LabGroups>(LAB_DEFAULT);
+  const [labGhost, setLabGhost] = useState(true);
+
+  useEffect(() => {
+    const id = setTimeout(() => setLabDebounced(labGroups), 350);
+    return () => clearTimeout(id);
+  }, [labGroups]);
+
+  useEffect(() => {
+    if (labEnabled && !labIndex) {
+      fetch("/data/lab/index.json")
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no lab data"))))
+        .then(setLabIndex, (e) => setLoadError(String(e)));
+    }
+  }, [labEnabled, labIndex]);
+
   useEffect(() => {
     loadOrbits().then(setOrbits, (e) => setLoadError(String(e)));
     loadReference().then(setReference, (e) => setLoadError(String(e)));
@@ -137,6 +306,10 @@ export default function OrbitViewer({
 
   const model = MODELS.find((m) => m.id === modelId)!;
   const omega = model.barred ? -omegaP : 0;
+  const labAvailable = modelId === "hunter24_axi" || modelId === "hunter24_bar";
+  const labActive = labEnabled && labAvailable;
+  const labSig = labActive ? labSigOf(labDebounced) : undefined;
+  const effectiveModelId = labActive ? "lab" : modelId;
 
   const contextObjects = useMemo(
     () => reference?.objects.filter((o) => o.category === "context") ?? [],
@@ -159,16 +332,59 @@ export default function OrbitViewer({
 
   // orbit integration requests: stars + selected context objects
   const requests: OrbitRequestSpec[] = useMemo(() => {
+    const lab = labActive
+      ? {
+          k: groupsToK(labDebounced),
+          kBH: labDebounced.bh,
+          rotating: model.barred,
+        }
+      : undefined;
     const reqs: OrbitRequestSpec[] = [];
     for (const s of stars) {
-      reqs.push({ objectId: s.source_id, ic: s.ic, modelId, omega });
+      reqs.push({
+        objectId: s.source_id,
+        ic: s.ic,
+        modelId: effectiveModelId,
+        omega,
+        lab,
+        labSig,
+      });
     }
     for (const cid of selectedContext) {
       const obj = contextObjects.find((o) => o.id === cid);
-      if (obj) reqs.push({ objectId: obj.id, ic: obj.ic, modelId, omega });
+      if (obj)
+        reqs.push({
+          objectId: obj.id,
+          ic: obj.ic,
+          modelId: effectiveModelId,
+          omega,
+          lab,
+          labSig,
+        });
+    }
+    // ghost: the adopted (unmodified) model for the primary star, for comparison
+    if (labActive && labGhost && stars.length > 0) {
+      reqs.push({
+        objectId: stars[0].source_id,
+        ic: stars[0].ic,
+        modelId,
+        omega,
+      });
     }
     return reqs;
-  }, [stars, selectedContext, contextObjects, modelId, omega]);
+  }, [
+    stars,
+    selectedContext,
+    contextObjects,
+    modelId,
+    effectiveModelId,
+    omega,
+    labActive,
+    labGhost,
+    labDebounced,
+    labSig,
+    model.barred,
+  ]);
 
   const { results, progress, errors } = useOrbits(requests);
 
@@ -176,7 +392,7 @@ export default function OrbitViewer({
   const sceneObjects: SceneObject[] = useMemo(() => {
     const objs: SceneObject[] = [];
     stars.forEach((s, i) => {
-      const r = results.get(orbitKey(s.source_id, modelId, omega));
+      const r = results.get(orbitKey(s.source_id, effectiveModelId, omega, labSig));
       if (r)
         objs.push({
           id: s.source_id,
@@ -189,7 +405,7 @@ export default function OrbitViewer({
     for (const cid of selectedContext) {
       const obj = contextObjects.find((o) => o.id === cid);
       if (!obj) continue;
-      const r = results.get(orbitKey(obj.id, modelId, omega));
+      const r = results.get(orbitKey(obj.id, effectiveModelId, omega, labSig));
       if (r)
         objs.push({
           id: obj.id,
@@ -199,8 +415,32 @@ export default function OrbitViewer({
           emphasis: false,
         });
     }
+    // ghost trail: same star in the unmodified adopted model
+    if (labActive && labGhost && stars.length > 0) {
+      const g = results.get(orbitKey(stars[0].source_id, modelId, omega));
+      if (g)
+        objs.push({
+          id: `${stars[0].source_id}__ghost`,
+          label: "adopted model",
+          color: "#8494ac",
+          positions: g.positions,
+          emphasis: false,
+          ghost: true,
+        });
+    }
     return objs;
-  }, [stars, selectedContext, contextObjects, results, modelId, omega]);
+  }, [
+    stars,
+    selectedContext,
+    contextObjects,
+    results,
+    modelId,
+    effectiveModelId,
+    omega,
+    labSig,
+    labActive,
+    labGhost,
+  ]);
 
   // low-frequency mirror of the clock for the slider/readout (4 Hz)
   useEffect(() => {
@@ -226,18 +466,20 @@ export default function OrbitViewer({
 
   const primary = stars[0];
   const primaryResult = primary
-    ? results.get(orbitKey(primary.source_id, modelId, omega))
+    ? results.get(orbitKey(primary.source_id, effectiveModelId, omega, labSig))
     : undefined;
 
-  const published = primary
-    ? model.refCol === "static"
-      ? primary.static
-      : model.refCol === "barred" && omegaP === 37.5
-        ? primary.barred
-        : model.refCol === "mcmillan"
-          ? primary.mcmillan
-          : undefined
-    : undefined;
+  const labIsCustom = labActive && !LAB_IS_DEFAULT(labDebounced);
+  const published =
+    primary && !labIsCustom
+      ? model.refCol === "static"
+        ? primary.static
+        : model.refCol === "barred" && omegaP === 37.5
+          ? primary.barred
+          : model.refCol === "mcmillan"
+            ? primary.mcmillan
+            : undefined
+      : undefined;
 
   // star search
   const searchMatches = useMemo(() => {
@@ -251,7 +493,7 @@ export default function OrbitViewer({
   }, [orbits, search]);
 
   const anyLoading = requests.some(
-    (r) => !results.has(orbitKey(r.objectId, r.modelId, r.omega)),
+    (r) => !results.has(orbitKey(r.objectId, r.modelId, r.omega, r.labSig)),
   );
 
   return (
@@ -266,8 +508,8 @@ export default function OrbitViewer({
           omega={omega}
           frame={frame}
           showDisc={showDisc}
-          showAccel={showAccel}
-          showPotential={showPotential}
+          showAccel={showAccel && !labActive}
+          showPotential={showPotential && !labActive}
           modelId={modelId}
           view={view}
         />
@@ -436,6 +678,96 @@ export default function OrbitViewer({
           )}
         </section>
 
+        {/* model lab */}
+        <section className="panel p-3">
+          <h3 className="text-xs uppercase tracking-wide text-faint mb-2">
+            Model lab
+          </h3>
+          <label
+            className={`flex items-center gap-2 text-xs ${
+              labAvailable ? "cursor-pointer" : "opacity-40"
+            }`}
+            title={
+              labAvailable
+                ? "rebuild the Hunter+2024 potential from its physical components with your own mass multipliers"
+                : "component grids exist for the Hunter+2024 models only"
+            }
+          >
+            <input
+              type="checkbox"
+              className="accent-[var(--accent)]"
+              disabled={!labAvailable}
+              checked={labActive}
+              onChange={(e) => setLabEnabled(e.target.checked)}
+            />
+            edit the model&apos;s components
+          </label>
+          {labActive && (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs text-faint leading-tight">
+                Gravity is linear, so scaling a component&apos;s mass rescales
+                its force field exactly — the orbit you see is the true orbit
+                of the modified potential (grids validated against the release
+                model at ×1). Shapes and scale radii stay fixed.
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {LAB_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={() =>
+                      setLabGroups({ ...LAB_DEFAULT, ...p.groups })
+                    }
+                    className="px-1.5 py-0.5 rounded text-xs bg-surface-2 text-muted hover:text-foreground"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              {LAB_SLIDERS.map(({ key, label, max }) => (
+                <div key={key} className="text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted">{label}</span>
+                    <span className="num text-foreground">
+                      ×{labGroups[key].toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={max}
+                    step={0.05}
+                    value={labGroups[key]}
+                    onChange={(e) =>
+                      setLabGroups((g) => ({
+                        ...g,
+                        [key]: parseFloat(e.target.value),
+                      }))
+                    }
+                    className="w-full accent-[var(--accent)]"
+                  />
+                </div>
+              ))}
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--accent)]"
+                  checked={labGhost}
+                  onChange={(e) => setLabGhost(e.target.checked)}
+                />
+                show adopted-model orbit as ghost trail
+              </label>
+              {labIndex && (
+                <LabRotationCurve index={labIndex} groups={labGroups} />
+              )}
+              <p className="text-xs text-faint leading-tight">
+                Sensitivity exploration only — published catalogue values use
+                the unmodified models. Halo-shape changes (flattening, scale
+                radius) are not linear and are not offered here.
+              </p>
+            </div>
+          )}
+        </section>
+
         {/* objects */}
         <section className="panel p-3">
           <h3 className="text-xs uppercase tracking-wide text-faint mb-2">
@@ -569,19 +901,27 @@ export default function OrbitViewer({
             />
             galaxy rendering (decorative; scaled to the model)
           </label>
-          <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+          <label
+            className={`flex items-center gap-2 text-xs mt-1 ${labActive ? "opacity-40" : "cursor-pointer"}`}
+            title={labActive ? "adopted models only (contours are precomputed)" : undefined}
+          >
             <input
               type="checkbox"
               className="accent-[var(--accent)]"
+              disabled={labActive}
               checked={showPotential}
               onChange={(e) => setShowPotential(e.target.checked)}
             />
             equipotential contours (midplane)
           </label>
-          <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+          <label
+            className={`flex items-center gap-2 text-xs mt-1 ${labActive ? "opacity-40" : "cursor-pointer"}`}
+            title={labActive ? "adopted models only" : undefined}
+          >
             <input
               type="checkbox"
               className="accent-[var(--accent)]"
+              disabled={labActive}
               checked={showAccel}
               onChange={(e) => setShowAccel(e.target.checked)}
             />
@@ -667,10 +1007,20 @@ export default function OrbitViewer({
               <div className="text-xs text-muted">integrating…</div>
             )}
             <p className="text-xs text-faint mt-2 leading-tight">
-              Browser values: live integration on the exported model grids
-              (DP5(4), sample-aligned steps). Published: release point-estimate
-              columns (AGAMA DOP853{model.refCol === "barred" ? ", Ωp=37.5" : ""}
-              ). Orbit quantities are model outputs, not observables.
+              {labIsCustom ? (
+                <>
+                  Custom Model-Lab potential — no published columns apply; the
+                  ghost trail shows the adopted model for comparison.
+                </>
+              ) : (
+                <>
+                  Browser values: live integration on the exported model grids
+                  (DP5(4), sample-aligned steps). Published: release
+                  point-estimate columns (AGAMA DOP853
+                  {model.refCol === "barred" ? ", Ωp=37.5" : ""}). Orbit
+                  quantities are model outputs, not observables.
+                </>
+              )}
             </p>
           </section>
         )}

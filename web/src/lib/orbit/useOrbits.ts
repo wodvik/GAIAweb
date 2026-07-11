@@ -28,10 +28,23 @@ export interface OrbitRequestSpec {
   omega: number;
   samples?: number;
   tGyr?: number;
+  /** Model-Lab composite settings (component multipliers + BH + frame). */
+  lab?: {
+    k: Record<string, number>;
+    kBH: number;
+    rotating: boolean;
+  };
+  /** cache discriminator for lab requests (encode multipliers here) */
+  labSig?: string;
 }
 
-export function orbitKey(objectId: string, modelId: string, omega: number) {
-  return `${objectId}|${modelId}|${omega}`;
+export function orbitKey(
+  objectId: string,
+  modelId: string,
+  omega: number,
+  labSig?: string,
+) {
+  return `${objectId}|${modelId}|${omega}${labSig ? `|${labSig}` : ""}`;
 }
 
 interface WorkerMsg {
@@ -118,7 +131,7 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
     const worker = workerRef.current;
     if (!worker) return;
     for (const spec of requests) {
-      const key = orbitKey(spec.objectId, spec.modelId, spec.omega);
+      const key = orbitKey(spec.objectId, spec.modelId, spec.omega, spec.labSig);
       if (results.has(key) || inFlightRef.current.has(key)) continue;
       inFlightRef.current.add(key);
       specsRef.current.set(key, spec);
@@ -131,6 +144,7 @@ export function useOrbits(requests: OrbitRequestSpec[]) {
         omega: spec.omega,
         samples: spec.samples,
         tGyr: spec.tGyr,
+        lab: spec.lab,
       });
     }
   }, [requests, results]);

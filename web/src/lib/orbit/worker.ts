@@ -10,6 +10,12 @@
 
 import { PotentialModel } from "../potentials/model";
 import type { PotentialMeta } from "../potentials/types";
+import {
+  CompositeModel,
+  LabIndex,
+  LabSettings,
+  componentModel,
+} from "../potentials/lab";
 import { integrateOrbit } from "./integrate";
 import { summarizeOrbit } from "./summary";
 
@@ -20,9 +26,66 @@ interface OrbitRequest {
   omega: number;
   tGyr?: number;
   samples?: number;
+  /** Model-Lab composite: component multipliers; when set, modelId selects
+   * the base ("lab_static" | "lab_barred") and grids come from /data/lab. */
+  lab?: LabSettings & { rotating: boolean };
 }
 
 const models = new Map<string, Promise<PotentialModel>>();
+let labIndexPromise: Promise<LabIndex> | null = null;
+const labParts = new Map<string, Promise<PotentialModel>>();
+
+function getLabIndex(): Promise<LabIndex> {
+  if (!labIndexPromise) {
+    labIndexPromise = fetch(`${self.location.origin}/data/lab/index.json`).then(
+      (r) => {
+        if (!r.ok) throw new Error("failed to load lab index");
+        return r.json();
+      },
+    );
+  }
+  return labIndexPromise;
+}
+
+async function getLabPart(id: string): Promise<PotentialModel> {
+  let p = labParts.get(id);
+  if (!p) {
+    p = (async () => {
+      const index = await getLabIndex();
+      const comp = index.components.find((c) => c.id === id);
+      if (!comp) throw new Error(`unknown lab component ${id}`);
+      const res = await fetch(`${self.location.origin}/data/lab/${comp.file}`);
+      if (!res.ok) throw new Error(`failed to load lab component ${id}`);
+      return componentModel(index, comp, await res.arrayBuffer());
+    })();
+    labParts.set(id, p);
+  }
+  return p;
+}
+
+async function buildComposite(
+  lab: LabSettings & { rotating: boolean },
+): Promise<CompositeModel> {
+  const index = await getLabIndex();
+  // static lab uses the axisymmetrised bar; barred lab swaps in the full bar
+  const wanted = index.components.filter((c) =>
+    lab.rotating ? c.id !== "bar_axi" : c.id !== "bar_full",
+  );
+  const parts = await Promise.all(
+    wanted.map(async (c) => ({
+      model: await getLabPart(c.id),
+      k: lab.k[c.id] ?? 1,
+    })),
+  );
+  return new CompositeModel(
+    parts,
+    index.blackHole,
+    lab.kBH,
+    lab.rotating,
+    index.barAngleRad,
+    index.barRotationSign,
+  );
+}
 
 function getModel(modelId: string): Promise<PotentialModel> {
   let p = models.get(modelId);
@@ -45,9 +108,9 @@ function getModel(modelId: string): Promise<PotentialModel> {
 }
 
 self.onmessage = async (ev: MessageEvent<OrbitRequest>) => {
-  const { id, modelId, ic, omega, tGyr, samples } = ev.data;
+  const { id, modelId, ic, omega, tGyr, samples, lab } = ev.data;
   try {
-    const model = await getModel(modelId);
+    const model = lab ? await buildComposite(lab) : await getModel(modelId);
     const t0 = performance.now();
     let lastProgress = 0;
     const traj = integrateOrbit(model, ic, {
